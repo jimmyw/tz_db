@@ -1,0 +1,107 @@
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "tz_db-3.h"
+#include "zlib.h"
+#define CHUNK 16384
+
+static const unsigned char TIME_ZONE_DB_3[{{zone_data_compressed_len}}] = {
+{{zone_data_compressed}}
+};
+
+static struct zone_store_3 zstore[] = {
+{% for zone in zones %}
+  {"{{ zone.full_name }}", {{ zone.offset }}, NULL, {{ zone.binary_data_len }}},{% endfor %}
+  {NULL, 0, NULL, 0}
+};
+
+static struct zone_store_3 *decompress_store(struct zone_store_3 *store) {
+   int ret;
+   unsigned have;
+   z_stream strm;
+   unsigned char out[CHUNK];
+   size_t out_offset = 0;
+
+
+  // Allocate memory fore store.
+  store->data = malloc(store->data_size);
+  if (!store->data)
+    return NULL;
+
+
+  /* allocate inflate state */
+  memset(&strm, 0, sizeof(strm));
+  ret = inflateInit(&strm);
+  if (ret != Z_OK) {
+    fprintf(stderr, "inflateInit error: %d\n", ret);
+    free(store->data);
+    store->data = NULL;
+    return NULL;
+  }
+
+  strm.avail_in = {{zone_data_compressed_len}};
+  strm.next_in = (unsigned char*)TIME_ZONE_DB_3;
+
+  /* run inflate() on input until output buffer not full */
+  do {
+
+    strm.avail_out = CHUNK;
+    strm.next_out = out;
+
+    ret = inflate(&strm, Z_FINISH);
+    switch (ret) {
+    case Z_BUF_ERROR:         /* Running with Z_FINISH, and not having enought space in output buf gives this, that can be ignored */
+      ret = 0;
+      break;
+    case Z_NEED_DICT:
+      ret = Z_DATA_ERROR;     /* and fall through */
+    case Z_DATA_ERROR:
+    case Z_MEM_ERROR:
+      (void)inflateEnd(&strm);
+      free(store->data);
+      store->data = NULL;
+      fprintf(stderr, "Error decompress: %d\n", ret);
+      return NULL;
+    }
+
+    have = CHUNK - strm.avail_out;
+
+    // If we are in range, we need to copy.
+    for (unsigned i = 0; i < have; i++) {
+      long in_offset = (long)out_offset - (long)store->offset;
+      if (in_offset >= 0 && in_offset < (long)store->data_size) {
+        store->data[in_offset] = out[i];
+      }
+      out_offset++;
+    }
+
+    // If we found what we where searhing fore, just return.
+    if (out_offset > (store->offset + store->data_size)) {
+      (void)inflateEnd(&strm);
+      return store;
+    }
+
+  } while (strm.avail_out == 0);
+
+
+  (void)inflateEnd(&strm);
+  return store;
+}
+
+struct zone_store_3 *get_tz_by_name_3(const char *name) {
+  for (size_t i = 0; zstore[i].name; i++) {
+    if (strcmp(zstore[i].name, name) == 0) {
+      return decompress_store(&zstore[i]);
+    }
+  }
+  fprintf(stderr, "Timezone not found\n");
+  return NULL;
+}
+
+void free_tzstore(struct zone_store_3 *store) {
+  if (store)
+    free(store->data);
+}
+

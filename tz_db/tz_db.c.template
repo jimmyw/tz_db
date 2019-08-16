@@ -1,0 +1,26 @@
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include "tz_db.h"
+
+{% for zone in zones %}
+static const uint8_t {{ zone.safe_name }}[] = {
+{{ zone.binary_data }}
+};
+{% endfor %}
+
+static const struct zone_store zstore[] = {
+{% for zone in zones %}
+  {"{{ zone.full_name }}", {{ zone.offset }}, {{ zone.binary_data_len }}},{% endfor %}
+  {NULL, NULL, 0}
+};
+
+const struct zone_store *get_tz_by_name(const char *name) {
+  for (size_t i = 0; zstore[i].name; i++) {
+    if (strcmp(zstore[i].name, name) == 0)
+      return &zstore[i];
+  }
+  return NULL;
+}
+
